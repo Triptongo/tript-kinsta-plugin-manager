@@ -503,7 +503,6 @@ export default function App() {
     setSitePlugins(p => ({ ...p, [envId]: { items: [], loading: true } }));
     try {
       const data = await kFetch(`/sites/environments/${envId}/wp-plugins`, token);
-      console.log("[loadSitePlugins] raw:", JSON.stringify(data, null, 2));
       const items = data.environment?.plugins?.items || [];
       setSitePlugins(p => ({ ...p, [envId]: { items, loading: false } }));
     } catch (e) {
@@ -551,7 +550,7 @@ export default function App() {
       const siteName = site?.display_name || envId;
       addLog(`[${siteName}] Actualizando ${slugs.length} plugin(s)...`, "info");
       try {
-        await kFetch(`/sites/environments/${envId}/wp-plugins`, token, {
+        await kFetch(`/sites/environments/${envId}/plugins`, token, {
           method: "PUT",
           body: JSON.stringify({ name: slugs }),
         });
@@ -586,7 +585,7 @@ export default function App() {
     for (const [envId, slugs] of Object.entries(byEnv)) {
       addLog(`[env:${envId.slice(0,8)}] Actualizando ${slugs.join(", ")}...`, "info");
       try {
-        await kFetch(`/sites/environments/${envId}/wp-plugins`, token, {
+        await kFetch(`/sites/environments/${envId}/plugins`, token, {
           method: "PUT",
           body: JSON.stringify({ name: slugs }),
         });
