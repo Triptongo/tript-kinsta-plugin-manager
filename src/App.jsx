@@ -472,10 +472,8 @@ export default function App() {
         if (site.environments?.length > 0) return site;
         try {
           const envData = await kFetch(`/sites/${site.id}/environments`, token);
-          console.log(`[enrich ${site.name}] raw:`, JSON.stringify(envData, null, 2));
-          return { ...site, environments: envData.site?.environments?.items || [] };
-        } catch (e) {
-          console.error(`[enrich ${site.name}] error:`, e.message);
+          return { ...site, environments: envData.site?.environments || [] };
+        } catch {
           return site;
         }
       }));
@@ -492,7 +490,6 @@ export default function App() {
     setLoadingPlugins(true);
     try {
       const data = await kFetch(`/company/${companyId}/wp-plugins`, token);
-      console.log("[loadCompanyPlugins] raw:", JSON.stringify(data, null, 2));
       setCompanyPlugins(data.company?.plugins?.items || []);
     } catch (e) {
       toast("Error al cargar plugins: " + e.message, "err");
