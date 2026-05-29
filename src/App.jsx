@@ -467,8 +467,17 @@ export default function App() {
     try {
       const data = await kFetch(`/sites?company=${companyId}&status=live&per_page=500`, token);
       const raw = data.company?.sites?.items || [];
-      // Enrich with environment info
-      setSites(raw);
+      // Enrich with environment info for sites that don't include it
+      const enriched = await Promise.all(raw.map(async site => {
+        if (site.environments?.length > 0) return site;
+        try {
+          const envData = await kFetch(`/sites/${site.id}/environments`, token);
+          return { ...site, environments: envData.site?.environments?.items || [] };
+        } catch {
+          return site;
+        }
+      }));
+      setSites(enriched);
     } catch (e) {
       toast("Error al cargar los sitios: " + e.message, "err");
     } finally {
@@ -504,7 +513,7 @@ export default function App() {
   useEffect(() => {
     if (!connected) return;
     loadSites();
-  }, [connected]);
+  }, [connected, loadSites]);
 
   useEffect(() => {
     if (!connected) return;
@@ -673,16 +682,16 @@ export default function App() {
           {/* SIDEBAR */}
           <div className="sidebar">
             <div className="sidebar-section">Vistas</div>
-            <div className={`sidebar-item ${view === "by-site" ? "active" : ""}`} onClick={() => setView("by-site")}>
+            <div className={`sidebar-item ${view === "by-site" ? "active" : ""}`} onClick={() => { setView("by-site"); setSearch(""); }}>
               <Icon name="layout" size={15} /> Por sitio
               <span className="sidebar-badge">{sites.length}</span>
             </div>
-            <div className={`sidebar-item ${view === "by-plugin" ? "active" : ""}`} onClick={() => setView("by-plugin")}>
+            <div className={`sidebar-item ${view === "by-plugin" ? "active" : ""}`} onClick={() => { setView("by-plugin"); setSearch(""); }}>
               <Icon name="list" size={15} /> Por plugin
               {pendingUpdates > 0 && <span className="sidebar-badge warn">{pendingUpdates}</span>}
             </div>
             <div className="sidebar-section">Acciones</div>
-            <div className={`sidebar-item ${view === "upload" ? "active" : ""}`} onClick={() => setView("upload")}>
+            <div className={`sidebar-item ${view === "upload" ? "active" : ""}`} onClick={() => { setView("upload"); setSearch(""); }}>
               <Icon name="upload" size={15} /> Instalar ZIP
             </div>
           </div>
