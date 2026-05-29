@@ -466,8 +466,7 @@ export default function App() {
     setLoadingSites(true);
     try {
       const data = await kFetch(`/sites?company=${companyId}&status=live&per_page=500`, token);
-      console.log("[loadSites] raw API response:", JSON.stringify(data, null, 2));
-      const raw = data.company?.sites?.items || [];
+      const raw = data.company?.sites || [];
       // Enrich with environment info for sites that don't include it
       const enriched = await Promise.all(raw.map(async site => {
         if (site.environments?.length > 0) return site;
@@ -491,6 +490,7 @@ export default function App() {
     setLoadingPlugins(true);
     try {
       const data = await kFetch(`/company/${companyId}/wp-plugins`, token);
+      console.log("[loadCompanyPlugins] raw:", JSON.stringify(data, null, 2));
       setCompanyPlugins(data.company?.plugins?.items || []);
     } catch (e) {
       toast("Error al cargar plugins: " + e.message, "err");
@@ -504,6 +504,7 @@ export default function App() {
     setSitePlugins(p => ({ ...p, [envId]: { items: [], loading: true } }));
     try {
       const data = await kFetch(`/sites/environments/${envId}/wp-plugins`, token);
+      console.log("[loadSitePlugins] raw:", JSON.stringify(data, null, 2));
       const items = data.environment?.plugins?.items || [];
       setSitePlugins(p => ({ ...p, [envId]: { items, loading: false } }));
     } catch (e) {
