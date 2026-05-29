@@ -466,6 +466,7 @@ export default function App() {
     setLoadingSites(true);
     try {
       const data = await kFetch(`/sites?company=${companyId}&status=live&per_page=500`, token);
+      console.log("[loadSites] raw API response:", JSON.stringify(data, null, 2));
       const raw = data.company?.sites?.items || [];
       // Enrich with environment info for sites that don't include it
       const enriched = await Promise.all(raw.map(async site => {
