@@ -472,8 +472,10 @@ export default function App() {
         if (site.environments?.length > 0) return site;
         try {
           const envData = await kFetch(`/sites/${site.id}/environments`, token);
+          console.log(`[enrich ${site.name}] raw:`, JSON.stringify(envData, null, 2));
           return { ...site, environments: envData.site?.environments?.items || [] };
-        } catch {
+        } catch (e) {
+          console.error(`[enrich ${site.name}] error:`, e.message);
           return site;
         }
       }));
