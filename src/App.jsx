@@ -521,8 +521,12 @@ export default function App() {
   }, [view, connected]);
 
   // Toggle expand site
+  function getLiveEnv(site) {
+    return site.environments?.find(e => e.name === "live") || site.environments?.[0];
+  }
+
   function toggleSite(site) {
-    const envId = site.environments?.[0]?.id || site.id;
+    const envId = getLiveEnv(site)?.id || site.id;
     if (expandedSite === site.id) {
       setExpandedSite(null);
     } else {
@@ -705,6 +709,7 @@ export default function App() {
                   sitePlugins={sitePlugins}
                   expandedSite={expandedSite}
                   toggleSite={toggleSite}
+                  getLiveEnv={getLiveEnv}
                   loadSites={loadSites}
                   loadingSites={loadingSites}
                   selectedSitePlugins={selectedSitePlugins}
@@ -788,7 +793,7 @@ export default function App() {
 }
 
 // ─── BY SITE VIEW ─────────────────────────────────────────────────────────────
-function BySiteView({ sites, sitePlugins, expandedSite, toggleSite, loadSites, loadingSites, selectedSitePlugins, setSelectedSitePlugins, totalSelected, onUpdate, search, setSearch, filterUpdate, setFilterUpdate }) {
+function BySiteView({ sites, sitePlugins, expandedSite, toggleSite, getLiveEnv, loadSites, loadingSites, selectedSitePlugins, setSelectedSitePlugins, totalSelected, onUpdate, search, setSearch, filterUpdate, setFilterUpdate }) {
 
   function togglePlugin(envId, slug) {
     setSelectedSitePlugins(prev => {
@@ -848,7 +853,8 @@ function BySiteView({ sites, sitePlugins, expandedSite, toggleSite, loadSites, l
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {filtered.map(site => {
-            const envId = site.environments?.[0]?.id || site.id;
+            const liveEnv = getLiveEnv(site);
+            const envId = liveEnv?.id || site.id;
             const isExpanded = expandedSite === site.id;
             const plugData = sitePlugins[envId];
             const plugins = plugData?.items || [];
@@ -856,6 +862,7 @@ function BySiteView({ sites, sitePlugins, expandedSite, toggleSite, loadSites, l
             const pluginsWithUpdate = plugins.filter(p => p.update === "available");
             const allSelected = pluginsWithUpdate.length > 0 && pluginsWithUpdate.every(p => siteSelected.has(p.name));
             const someSelected = pluginsWithUpdate.some(p => siteSelected.has(p.name));
+            const primaryDomain = liveEnv?.primaryDomain?.name;
 
             return (
               <div key={site.id} className="table-wrap" style={{ borderRadius: 8 }}>
@@ -867,12 +874,15 @@ function BySiteView({ sites, sitePlugins, expandedSite, toggleSite, loadSites, l
                   <Icon name={isExpanded ? "chevronDown" : "chevronRight"} size={14} />
                   <div style={{ flex: 1 }}>
                     <div className="site-name">{site.display_name}</div>
-                    <div className="site-url">{site.site_name || site.display_name}</div>
+                    <div className="site-url">{primaryDomain || site.name}</div>
                   </div>
                   {isExpanded && pluginsWithUpdate.length > 0 && (
                     <div onClick={e => { e.stopPropagation(); selectAllSitePlugins(envId, pluginsWithUpdate); }}>
                       <Checkbox checked={allSelected} indeterminate={!allSelected && someSelected} onChange={() => {}} />
                     </div>
+                  )}
+                  {liveEnv && (
+                    <span className="badge badge-green" style={{ textTransform: "capitalize" }}>{liveEnv.display_name}</span>
                   )}
                   <span className="badge badge-blue">{plugins.length || "—"} plugins</span>
                   {pluginsWithUpdate.length > 0 && (
