@@ -409,6 +409,10 @@ function SetupScreen({ onConnect }) {
   );
 }
 
+function getLiveEnv(site) {
+  return site.environments?.find(e => e.name === "live") || site.environments?.[0];
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem("kToken") || "");
@@ -421,13 +425,13 @@ export default function App() {
   const [loadingSites, setLoadingSites] = useState(false);
   const [loadingPlugins, setLoadingPlugins] = useState(false);
 
-  // per-site plugin cache: { [env_id]: { items, loading } }
+  // per-site plugin cache: { [site_id]: { items, loading, envId } }
   const [sitePlugins, setSitePlugins] = useState({});
   const [expandedSite, setExpandedSite] = useState(null);
 
   // selection
-  const [selectedPlugins, setSelectedPlugins] = useState(new Set()); // Set of "env_id::slug"
-  const [selectedSitePlugins, setSelectedSitePlugins] = useState({}); // { env_id: Set<slug> }
+  const [selectedPlugins, setSelectedPlugins] = useState(new Set()); // Set of "env_id::slug" (by-plugin view)
+  const [selectedSitePlugins, setSelectedSitePlugins] = useState({}); // { site_id: Set<slug> }
 
   // update operation
   const [updating, setUpdating] = useState(false);
@@ -466,18 +470,7 @@ export default function App() {
     setLoadingSites(true);
     try {
       const data = await kFetch(`/sites?company=${companyId}&status=live&per_page=500`, token);
-      const raw = data.company?.sites || [];
-      // Enrich with environment info for sites that don't include it
-      const enriched = await Promise.all(raw.map(async site => {
-        if (site.environments?.length > 0) return site;
-        try {
-          const envData = await kFetch(`/sites/${site.id}/environments`, token);
-          return { ...site, environments: envData.site?.environments || [] };
-        } catch {
-          return site;
-        }
-      }));
-      setSites(enriched);
+      setSites(data.company?.sites || []);
     } catch (e) {
       toast("Error al cargar los sitios: " + e.message, "err");
     } finally {
@@ -498,15 +491,31 @@ export default function App() {
     }
   }, [token, companyId]);
 
-  // LOAD SITE PLUGINS
-  async function loadSitePlugins(envId) {
-    setSitePlugins(p => ({ ...p, [envId]: { items: [], loading: true } }));
+  // Resolves the live environment ID for a site.
+  // Uses cached sitePlugins data first, then site.environments, then fetches on-demand.
+  async function resolveLiveEnvId(site) {
+    const cached = sitePlugins[site.id]?.envId;
+    if (cached) return cached;
+    let liveEnv = getLiveEnv(site);
+    if (liveEnv) return liveEnv.id;
+    const envData = await kFetch(`/sites/${site.id}/environments`, token);
+    const environments = envData.site?.environments || [];
+    liveEnv = environments.find(e => e.name === "live") || environments[0];
+    if (!liveEnv?.id) throw new Error("No se encontró environment live");
+    setSites(prev => prev.map(s => s.id === site.id ? { ...s, environments } : s));
+    return liveEnv.id;
+  }
+
+  // LOAD SITE PLUGINS — keyed by site.id
+  async function loadSitePlugins(site) {
+    setSitePlugins(p => ({ ...p, [site.id]: { items: [], loading: true } }));
     try {
+      const envId = await resolveLiveEnvId(site);
       const data = await kFetch(`/sites/environments/${envId}/wp-plugins`, token);
       const items = data.environment?.plugins?.items || [];
-      setSitePlugins(p => ({ ...p, [envId]: { items, loading: false } }));
+      setSitePlugins(p => ({ ...p, [site.id]: { items, loading: false, envId } }));
     } catch (e) {
-      setSitePlugins(p => ({ ...p, [envId]: { items: [], loading: false, error: e.message } }));
+      setSitePlugins(p => ({ ...p, [site.id]: { items: [], loading: false, error: e.message } }));
     }
   }
 
@@ -520,38 +529,32 @@ export default function App() {
     if (view === "by-plugin") loadCompanyPlugins();
   }, [view, connected]);
 
-  // Toggle expand site
-  function getLiveEnv(site) {
-    return site.environments?.find(e => e.name === "live") || site.environments?.[0];
-  }
-
   function toggleSite(site) {
-    const envId = getLiveEnv(site)?.id || site.id;
     if (expandedSite === site.id) {
       setExpandedSite(null);
     } else {
       setExpandedSite(site.id);
-      if (!sitePlugins[envId]) loadSitePlugins(envId);
+      if (!sitePlugins[site.id]) loadSitePlugins(site);
     }
   }
 
   // BULK UPDATE (by-site view)
   async function runBulkUpdate() {
-    // Collect: { env_id, slugs[] }
-    const tasks = {};
-    for (const key of selectedSitePlugins ? Object.keys(selectedSitePlugins) : []) {
-      const slugs = [...(selectedSitePlugins[key] || [])];
-      if (slugs.length > 0) tasks[key] = slugs;
+    const tasks = [];
+    for (const [siteId, slugSet] of Object.entries(selectedSitePlugins)) {
+      const slugs = [...slugSet];
+      const envId = sitePlugins[siteId]?.envId;
+      if (slugs.length > 0 && envId) tasks.push({ siteId, slugs, envId });
     }
-    if (Object.keys(tasks).length === 0) return;
+    if (tasks.length === 0) return;
 
     setUpdating(true);
     setUpdateLog([]);
     setShowUpdateModal(true);
 
-    for (const [envId, slugs] of Object.entries(tasks)) {
-      const site = sites.find(s => (s.environments?.[0]?.id || s.id) === envId);
-      const siteName = site?.display_name || envId;
+    for (const { siteId, slugs, envId } of tasks) {
+      const site = sites.find(s => s.id === siteId);
+      const siteName = site?.display_name || siteId;
       addLog(`[${siteName}] Actualizando ${slugs.length} plugin(s)...`, "info");
       try {
         await kFetch(`/sites/environments/${envId}/plugins`, token, {
@@ -559,8 +562,7 @@ export default function App() {
           body: JSON.stringify({ name: slugs }),
         });
         addLog(`[${siteName}] ✓ ${slugs.join(", ")}`, "ok");
-        // Refresh
-        await loadSitePlugins(envId);
+        if (site) await loadSitePlugins(site);
       } catch (e) {
         addLog(`[${siteName}] ✗ Error: ${e.message}`, "err");
       }
@@ -619,11 +621,9 @@ export default function App() {
     for (const siteId of uploadSites) {
       const site = sites.find(s => s.id === siteId);
       const siteName = site?.display_name || siteId;
-      const envId = site?.environments?.[0]?.id;
-      if (!envId) { setUploadLog(l => [...l, { msg: `[${siteName}] No se encontró environment`, type: "err" }]); continue; }
-
       setUploadLog(l => [...l, { msg: `[${siteName}] Instalando...`, type: "info" }]);
       try {
+        const envId = await resolveLiveEnvId(site);
         await kFetch(`/sites/environments/${envId}/plugins/install`, token, {
           method: "POST",
           body: JSON.stringify({ plugin: b64, filename: uploadFile.name }),
@@ -709,7 +709,6 @@ export default function App() {
                   sitePlugins={sitePlugins}
                   expandedSite={expandedSite}
                   toggleSite={toggleSite}
-                  getLiveEnv={getLiveEnv}
                   loadSites={loadSites}
                   loadingSites={loadingSites}
                   selectedSitePlugins={selectedSitePlugins}
@@ -793,25 +792,25 @@ export default function App() {
 }
 
 // ─── BY SITE VIEW ─────────────────────────────────────────────────────────────
-function BySiteView({ sites, sitePlugins, expandedSite, toggleSite, getLiveEnv, loadSites, loadingSites, selectedSitePlugins, setSelectedSitePlugins, totalSelected, onUpdate, search, setSearch, filterUpdate, setFilterUpdate }) {
+function BySiteView({ sites, sitePlugins, expandedSite, toggleSite, loadSites, loadingSites, selectedSitePlugins, setSelectedSitePlugins, totalSelected, onUpdate, search, setSearch, filterUpdate, setFilterUpdate }) {
 
-  function togglePlugin(envId, slug) {
+  function togglePlugin(siteId, slug) {
     setSelectedSitePlugins(prev => {
-      const s = new Set(prev[envId] || []);
+      const s = new Set(prev[siteId] || []);
       if (s.has(slug)) s.delete(slug); else s.add(slug);
-      return { ...prev, [envId]: s };
+      return { ...prev, [siteId]: s };
     });
   }
 
-  function selectAllSitePlugins(envId, pluginsWithUpdate) {
+  function selectAllSitePlugins(siteId, pluginsWithUpdate) {
     setSelectedSitePlugins(prev => {
-      const current = prev[envId] || new Set();
+      const current = prev[siteId] || new Set();
       const allSlugs = pluginsWithUpdate.map(p => p.name);
       const allSelected = allSlugs.every(s => current.has(s));
       const newSet = new Set(current);
       if (allSelected) allSlugs.forEach(s => newSet.delete(s));
       else allSlugs.forEach(s => newSet.add(s));
-      return { ...prev, [envId]: newSet };
+      return { ...prev, [siteId]: newSet };
     });
   }
 
@@ -854,11 +853,10 @@ function BySiteView({ sites, sitePlugins, expandedSite, toggleSite, getLiveEnv, 
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {filtered.map(site => {
             const liveEnv = getLiveEnv(site);
-            const envId = liveEnv?.id || site.id;
             const isExpanded = expandedSite === site.id;
-            const plugData = sitePlugins[envId];
+            const plugData = sitePlugins[site.id];
             const plugins = plugData?.items || [];
-            const siteSelected = selectedSitePlugins[envId] || new Set();
+            const siteSelected = selectedSitePlugins[site.id] || new Set();
             const pluginsWithUpdate = plugins.filter(p => p.update === "available");
             const allSelected = pluginsWithUpdate.length > 0 && pluginsWithUpdate.every(p => siteSelected.has(p.name));
             const someSelected = pluginsWithUpdate.some(p => siteSelected.has(p.name));
@@ -877,7 +875,7 @@ function BySiteView({ sites, sitePlugins, expandedSite, toggleSite, getLiveEnv, 
                     <div className="site-url">{primaryDomain || site.name}</div>
                   </div>
                   {isExpanded && pluginsWithUpdate.length > 0 && (
-                    <div onClick={e => { e.stopPropagation(); selectAllSitePlugins(envId, pluginsWithUpdate); }}>
+                    <div onClick={e => { e.stopPropagation(); selectAllSitePlugins(site.id, pluginsWithUpdate); }}>
                       <Checkbox checked={allSelected} indeterminate={!allSelected && someSelected} onChange={() => {}} />
                     </div>
                   )}
@@ -916,7 +914,7 @@ function BySiteView({ sites, sitePlugins, expandedSite, toggleSite, getLiveEnv, 
                                 {p.update === "available" && (
                                   <Checkbox
                                     checked={siteSelected.has(p.name)}
-                                    onChange={() => togglePlugin(envId, p.name)}
+                                    onChange={() => togglePlugin(site.id, p.name)}
                                   />
                                 )}
                               </td>
