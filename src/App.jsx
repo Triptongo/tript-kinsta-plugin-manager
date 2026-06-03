@@ -555,17 +555,21 @@ export default function App() {
     for (const { siteId, slugs, envId } of tasks) {
       const site = sites.find(s => s.id === siteId);
       const siteName = site?.display_name || siteId;
-      addLog(`[${siteName}] Actualizando ${slugs.length} plugin(s)...`, "info");
-      try {
-        await kFetch(`/sites/environments/${envId}/plugins`, token, {
-          method: "PUT",
-          body: JSON.stringify({ name: slugs }),
-        });
-        addLog(`[${siteName}] ✓ ${slugs.join(", ")}`, "ok");
-        if (site) await loadSitePlugins(site);
-      } catch (e) {
-        addLog(`[${siteName}] ✗ Error: ${e.message}`, "err");
+      const pluginItems = sitePlugins[siteId]?.items || [];
+      for (const slug of slugs) {
+        const updateVersion = pluginItems.find(p => p.name === slug)?.update_version;
+        addLog(`[${siteName}] Actualizando ${slug}...`, "info");
+        try {
+          await kFetch(`/sites/environments/${envId}/plugins`, token, {
+            method: "PUT",
+            body: JSON.stringify({ name: slug, update_version: updateVersion }),
+          });
+          addLog(`[${siteName}] ✓ ${slug}`, "ok");
+        } catch (e) {
+          addLog(`[${siteName}] ✗ ${slug}: ${e.message}`, "err");
+        }
       }
+      if (site) await loadSitePlugins(site);
     }
     addLog("— Proceso terminado —", "info");
     setUpdating(false);
@@ -576,28 +580,26 @@ export default function App() {
   // BULK UPDATE (by-plugin view)
   async function runPluginViewUpdate() {
     if (selectedPlugins.size === 0) return;
-    // Group by env_id
-    const byEnv = {};
-    for (const key of selectedPlugins) {
-      const [envId, slug] = key.split("::");
-      if (!byEnv[envId]) byEnv[envId] = [];
-      byEnv[envId].push(slug);
-    }
 
     setUpdating(true);
     setUpdateLog([]);
     setShowUpdateModal(true);
 
-    for (const [envId, slugs] of Object.entries(byEnv)) {
-      addLog(`[env:${envId.slice(0,8)}] Actualizando ${slugs.join(", ")}...`, "info");
+    for (const key of selectedPlugins) {
+      const [envId, slug] = key.split("::");
+      const pluginData = companyPlugins.find(p => p.name === slug);
+      const envEntry = pluginData?.environments?.find(e => e.id === envId);
+      const updateVersion = envEntry?.plugin_update_version;
+      const label = `${slug} @ ${envId.slice(0, 8)}`;
+      addLog(`[${label}] Actualizando...`, "info");
       try {
         await kFetch(`/sites/environments/${envId}/plugins`, token, {
           method: "PUT",
-          body: JSON.stringify({ name: slugs }),
+          body: JSON.stringify({ name: slug, update_version: updateVersion }),
         });
-        addLog(`[env:${envId.slice(0,8)}] ✓ OK`, "ok");
+        addLog(`[${label}] ✓ OK`, "ok");
       } catch (e) {
-        addLog(`[env:${envId.slice(0,8)}] ✗ ${e.message}`, "err");
+        addLog(`[${label}] ✗ ${e.message}`, "err");
       }
     }
     addLog("— Proceso terminado —", "info");
