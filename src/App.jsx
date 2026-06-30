@@ -508,7 +508,7 @@ export default function App() {
 
   // LOAD SITE PLUGINS — keyed by site.id, returns fetched items for callers that need them
   async function loadSitePlugins(site) {
-    setSitePlugins(p => ({ ...p, [site.id]: { items: [], loading: true } }));
+    setSitePlugins(p => ({ ...p, [site.id]: { ...p[site.id], items: [], loading: true } })); // preserve envId during load
     try {
       const envId = await resolveLiveEnvId(site);
       const data = await kFetch(`/sites/environments/${envId}/wp-plugins`, token);
@@ -548,7 +548,7 @@ export default function App() {
       const envId = sitePlugins[siteId]?.envId;
       if (slugs.length > 0 && envId) tasks.push({ siteId, slugs, envId });
     }
-    if (tasks.length === 0) return;
+    if (tasks.length === 0) { toast("No hay plugins seleccionados para actualizar", "err"); return; }
 
     setUpdating(true);
     setUpdateLog([]);
@@ -584,13 +584,25 @@ export default function App() {
         }
       }
       if (site) {
-        addLog(`[${siteName}] Verificando versiones post-update...`, "info");
-        const refreshed = await loadSitePlugins(site);
+        // WordPress puede tardar en reflejar el update luego de que la operación completa.
+        // Reintentamos el refresh hasta que todas las versiones cambien (máx 4 intentos × 8s).
+        addLog(`[${siteName}] Esperando que WordPress aplique los cambios...`, "info");
+        let refreshed = [];
+        for (let attempt = 1; attempt <= 4; attempt++) {
+          await new Promise(r => setTimeout(r, 8000));
+          refreshed = await loadSitePlugins(site);
+          const allDone = slugs.every(slug => {
+            const p = refreshed.find(i => i.name === slug);
+            return !p || p.update !== "available";
+          });
+          if (allDone) break;
+          if (attempt < 4) addLog(`[${siteName}] Aún pendiente, reintentando (${attempt}/3)...`, "info");
+        }
         for (const slug of slugs) {
           const after = refreshed.find(p => p.name === slug);
           if (after) {
             const stillPending = after.update === "available";
-            addLog(`[${siteName}] ${slug}: v${after.version}${stillPending ? " (update pendiente aún)" : " ✓ al día"}`, stillPending ? "err" : "ok");
+            addLog(`[${siteName}] ${slug}: v${after.version}${stillPending ? " ⚠ no se refleja aún (actualizá manualmente)" : " ✓ al día"}`, stillPending ? "err" : "ok");
           }
         }
       }
