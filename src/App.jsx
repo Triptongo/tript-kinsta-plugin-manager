@@ -506,7 +506,7 @@ export default function App() {
     return liveEnv.id;
   }
 
-  // LOAD SITE PLUGINS — keyed by site.id
+  // LOAD SITE PLUGINS — keyed by site.id, returns fetched items for callers that need them
   async function loadSitePlugins(site) {
     setSitePlugins(p => ({ ...p, [site.id]: { items: [], loading: true } }));
     try {
@@ -514,8 +514,10 @@ export default function App() {
       const data = await kFetch(`/sites/environments/${envId}/wp-plugins`, token);
       const items = data.environment?.plugins?.items || [];
       setSitePlugins(p => ({ ...p, [site.id]: { items, loading: false, envId } }));
+      return items;
     } catch (e) {
       setSitePlugins(p => ({ ...p, [site.id]: { items: [], loading: false, error: e.message } }));
+      return [];
     }
   }
 
@@ -557,19 +559,36 @@ export default function App() {
       const siteName = site?.display_name || siteId;
       const pluginItems = sitePlugins[siteId]?.items || [];
       for (const slug of slugs) {
-        const updateVersion = pluginItems.find(p => p.name === slug)?.update_version;
-        addLog(`[${siteName}] Actualizando ${slug}...`, "info");
+        const plugin = pluginItems.find(p => p.name === slug);
+        const currentVersion = plugin?.version;
+        const updateVersion = plugin?.update_version;
+        const versionLabel = currentVersion && updateVersion ? `v${currentVersion} → v${updateVersion}` : "(versiones desconocidas)";
+        addLog(`[${siteName}] ${slug} ${versionLabel}`, "info");
+        if (!updateVersion) {
+          addLog(`[${siteName}] ✗ ${slug}: update_version no disponible, se omite`, "err");
+          continue;
+        }
         try {
-          await kFetch(`/sites/environments/${envId}/plugins`, token, {
+          const res = await kFetch(`/sites/environments/${envId}/plugins`, token, {
             method: "PUT",
             body: JSON.stringify({ name: slug, update_version: updateVersion }),
           });
-          addLog(`[${siteName}] ✓ ${slug}`, "ok");
+          addLog(`[${siteName}] ✓ ${slug}: API respondió ${JSON.stringify(res)}`, "ok");
         } catch (e) {
           addLog(`[${siteName}] ✗ ${slug}: ${e.message}`, "err");
         }
       }
-      if (site) await loadSitePlugins(site);
+      if (site) {
+        addLog(`[${siteName}] Verificando versiones post-update...`, "info");
+        const refreshed = await loadSitePlugins(site);
+        for (const slug of slugs) {
+          const after = refreshed.find(p => p.name === slug);
+          if (after) {
+            const stillPending = after.update === "available";
+            addLog(`[${siteName}] ${slug}: v${after.version}${stillPending ? " (update pendiente aún)" : " ✓ al día"}`, stillPending ? "err" : "ok");
+          }
+        }
+      }
     }
     addLog("— Proceso terminado —", "info");
     setUpdating(false);
