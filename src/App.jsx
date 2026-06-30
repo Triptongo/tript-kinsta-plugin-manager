@@ -573,7 +573,12 @@ export default function App() {
             method: "PUT",
             body: JSON.stringify({ name: slug, update_version: updateVersion }),
           });
-          addLog(`[${siteName}] ✓ ${slug}: API respondió ${JSON.stringify(res)}`, "ok");
+          if (res.operation_id) {
+            addLog(`[${siteName}] ${slug}: operación en curso (${res.operation_id.slice(-8)})`, "info");
+            await waitForOperation(res.operation_id, `${siteName}/${slug}`);
+          } else {
+            addLog(`[${siteName}] ✓ ${slug}: ${JSON.stringify(res)}`, "ok");
+          }
         } catch (e) {
           addLog(`[${siteName}] ✗ ${slug}: ${e.message}`, "err");
         }
@@ -610,13 +615,23 @@ export default function App() {
       const envEntry = pluginData?.environments?.find(e => e.id === envId);
       const updateVersion = envEntry?.plugin_update_version;
       const label = `${slug} @ ${envId.slice(0, 8)}`;
-      addLog(`[${label}] Actualizando...`, "info");
+      const versionLabel = updateVersion ? `→ v${updateVersion}` : "(versión desconocida)";
+      addLog(`[${label}] Actualizando ${versionLabel}`, "info");
+      if (!updateVersion) {
+        addLog(`[${label}] ✗ update_version no disponible, se omite`, "err");
+        continue;
+      }
       try {
-        await kFetch(`/sites/environments/${envId}/plugins`, token, {
+        const res = await kFetch(`/sites/environments/${envId}/plugins`, token, {
           method: "PUT",
           body: JSON.stringify({ name: slug, update_version: updateVersion }),
         });
-        addLog(`[${label}] ✓ OK`, "ok");
+        if (res.operation_id) {
+          addLog(`[${label}] operación en curso (${res.operation_id.slice(-8)})`, "info");
+          await waitForOperation(res.operation_id, label);
+        } else {
+          addLog(`[${label}] ✓ ${JSON.stringify(res)}`, "ok");
+        }
       } catch (e) {
         addLog(`[${label}] ✗ ${e.message}`, "err");
       }
@@ -629,6 +644,28 @@ export default function App() {
 
   function addLog(msg, type = "info") {
     setUpdateLog(l => [...l, { msg, type }]);
+  }
+
+  async function waitForOperation(operationId, label) {
+    const MAX = 24; // 2 min máx a 5s por intento
+    for (let i = 1; i <= MAX; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      try {
+        const data = await kFetch(`/operations/${encodeURIComponent(operationId)}`, token);
+        const status = data.operation?.status ?? data.status;
+        addLog(`[${label}] ${status} (${i}/${MAX})`, "info");
+        if (status === "completed" || status === 200) return true;
+        if (status === "failed" || status === "error") {
+          addLog(`[${label}] ✗ Operación fallida`, "err");
+          return false;
+        }
+      } catch (e) {
+        addLog(`[${label}] ✗ Error al consultar operación: ${e.message}`, "err");
+        return false;
+      }
+    }
+    addLog(`[${label}] ✗ Timeout: la operación tardó más de 2 minutos`, "err");
+    return false;
   }
 
   // UPLOAD
